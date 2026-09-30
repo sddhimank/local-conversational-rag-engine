@@ -1,0 +1,70 @@
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag_postgres
+    environment:
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_password
+      POSTGRES_DB: rag_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_user -d rag_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./app/ollama_init.sh:/tmp/ollama_init.sh # mount the entry script
+    # Override container entrypoint to convert line endings and run the script automatically
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # 1. Copy the script to an internal container directory to break the mount lock
+        cp /tmp/ollama_init.sh /root/ollama_init.sh
+        
+        # 2. Safely strip Windows carriage returns and set execution rights
+        sed -i 's/\r$//' /root/ollama_init.sh
+        chmod +x /root/ollama_init.sh
+        
+        # 3. Execute the clean modular script from the container layer
+        /root/ollama_init.sh
+    # -- Add ollama health check
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30  # Allows up to 5 minutes for downloads to settle
+# NEW SERVICE: Streamlit RAG Web Application Container Configuration
+
+  rag-web-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_streamlit_app
+    ports:
+      - "8501:8501"
+    volumes:
+      - D:\Working\LearnAI\rag-postgres-app\data:/workspace/data  # Shared mount volume to inject folder files dynamically
+      - ./upload:/workspace/upload  # Persistent volume mapping for UI dated uploads
+    environment:
+      - DB_URL=postgresql+psycopg://rag_user:rag_password@postgres:5432/rag_db
+      - STORAGE_TYPE=LOCAL # Toggle profile type configuration
+    depends_on:
+      postgres:
+        condition: service_healthy  # Wait until PostgreSQL is fully healthy before starting app
+      ollama:
+        condition: service_healthy # App waits until models are fully pulled!
+volumes:
+  pgdata:
+  ollama_data:

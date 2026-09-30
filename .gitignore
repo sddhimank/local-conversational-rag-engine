@@ -1,0 +1,24 @@
+# Local Database Storage Volumes
+pgdata/
+ollama_data/
+
+# User Data Directories
+data/
+upload/
+
+# Python runtime artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# IDE and Operating System footprints
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
