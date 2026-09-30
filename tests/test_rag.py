@@ -33,5 +33,11 @@ def test_delete_vectors_for_file_execution(mock_create_engine):
     
     # Validate the parameter binding logic to ensure no SQL syntax errors occur
     args, kwargs = mock_conn.execute.call_args
+
+    # Extract structural components safely from position-based argument blocks
+    sql_query_string = str(args[0])
+    bind_parameters_dict = args[1] if len(args) > 1 else kwargs
+
     assert "DELETE FROM langchain_pg_embedding" in str(args[0])
-    assert kwargs["source_suffix"] == "%test_log.txt"
+    # ✅ FIX: Evaluates the dictionary parameters securely out of the positional routing array
+    assert bind_parameters_dict["source_suffix"] == "%test_log.txt"
