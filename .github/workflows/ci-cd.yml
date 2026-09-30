@@ -39,6 +39,9 @@ jobs:
 
     # Step 5: Execute Python Unit Tests (Baseline framework check)
     - name: Test with pytest
+      env:
+        # ✅ FIX: Forces pytest to look into the workspace root so it resolves 'app.ingest' perfectly
+        PYTHONPATH: .
       run: |
         # Run tests if test suites exist, otherwise pass safely
         if [ -d "tests" ]; then pytest; else echo "No tests configured yet. Skipping."; fi
