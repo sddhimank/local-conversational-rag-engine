@@ -126,19 +126,34 @@ with st.sidebar:
     # ─── TARGETED CONTEXT FILTER SELECTION SWITCH ───
     st.header("🎯 Context Targeting Scope")
     all_available_paths = get_all_distinct_sources()
+
+    # Dynamically extract all distinct directory structures
+    distinct_folders = sorted(list({os.path.dirname(p) for p in all_available_paths if os.path.dirname(p) and os.path.dirname(p) != "."}))
     
-    # Human-friendly dictionary labels tracking actual systemic string directories
-    path_display_map = {p: f"📂 {os.path.dirname(p)} ({os.path.basename(p)})" if "sub" in p else f"📄 {os.path.basename(p)}" for p in all_available_paths}
+    # 1. Provide a Selector Mode toggle switch
+    scope_mode = st.radio("Target Search Scope Selection Mode:", ["📁 Folders Selection", "📄 Individual Files Selection"])
     
-    selected_display_names = st.multiselect(
-        "Select target files/folders to search against (Leave blank to search everything):",
-        options=list(path_display_map.values()),
-        default=[]
-    )
-    
-    # Reverse map chosen items back to original raw file path arrays
-    selected_raw_paths = [path for path, label in path_display_map.items() if label in selected_display_names]
-    # ────────────────────────────────────────────────
+    selected_raw_paths = []
+    selected_folders = []
+
+    if scope_mode == "📁 Folders Selection":
+        selected_folders = st.multiselect(
+            "Select target folders to search against (All files inside will be scanned):",
+            options=distinct_folders,
+            default=[]
+        )
+    else:
+        # Human-friendly dictionary labels tracking actual systemic string directories
+        path_display_map = {p: f"📂 {os.path.dirname(p)} ({os.path.basename(p)})" if "sub" in p else f"📄 {os.path.basename(p)}" for p in all_available_paths}
+        
+        selected_display_names = st.multiselect(
+            "Select target files/folders to search against (Leave blank to search everything):",
+            options=list(path_display_map.values()),
+            default=[]
+        )
+        # Reverse map chosen items back to original raw file path arrays
+        selected_raw_paths = [path for path, label in path_display_map.items() if label in selected_display_names]
+        # ────────────────────────────────────────────────
 
     st.markdown("---")
     st.header("📥 Ingest Subsystem")
@@ -176,7 +191,9 @@ st.title("🧠 Conversational Local RAG Engine")
 st.caption("Secure local inference engine featuring scoped metadata file filtering pipelines.")
 
 # Handle current scope alert banner placements
-if selected_raw_paths:
+if selected_folders:
+    st.info(f"🎯 **Target Active:** Search limited to all files inside folders: {', '.join(selected_folders)}")
+elif selected_raw_paths:
     st.info(f"🎯 **Target Active:** Search limited to **{len(selected_raw_paths)}** targeted selection constraint rules.")
 else:
     st.success("🌐 **Global Active:** Search scanning all available documents in the vector database.")
@@ -190,6 +207,7 @@ for msg in st.session_state.messages:
 
 # ─── CRITICAL FIX: ALL EXECUTION LINES MUST SIT INSIDE THIS INDENT BLOCK ───
 if user_query := st.chat_input("Ask a question about your files..."):
+    full_res = ""
     # 1. Add user query to state and display it
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -219,7 +237,15 @@ if user_query := st.chat_input("Ask a question about your files..."):
 
             # Build metadata filter block for pgvector targeting
             search_kwargs = {"k": 3}
-            if selected_raw_paths:
+            # FOLDER FILTERS (Uses a list of $like wildcards or matches to isolate directories)
+            if selected_folders:
+                if len(selected_folders) == 1:
+                    search_kwargs["filter"] = {"source": {"$like": f"{selected_folders[0]}/%"}}
+                else:
+                    # Construct multi-folder fallback filter layout
+                    search_kwargs["filter"] = {"$or": [{"source": {"$like": f"{f}/%"}} for f in selected_folders]}
+            # INDIVIDUAL FILE FILTERS
+            elif selected_raw_paths:
                 # Injects LangChain's strict dictionary filtering constraints mapping directly into SQL clauses
                 search_kwargs["filter"] = {"source": {"$in": selected_raw_paths}}
                 
