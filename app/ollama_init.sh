@@ -13,6 +13,7 @@ exec 3>&- # Clean up file descriptor trace
 # 3. Pull models hands-free
 echo "📥 Ollama Init: Pre-loading embedding model: nomic-embed-text..."
 /bin/ollama pull nomic-embed-text
+/bin/ollama pull bge-large
 
 echo "📥 Ollama Init: Pre-loading LLM engine: qwen2.5:1.5b..."
 /bin/ollama pull qwen2.5:1.5b

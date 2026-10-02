@@ -11,7 +11,9 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain_huggingface import HuggingFaceEmbeddings
 from ingest import run_ingestion
+
 
 st.set_page_config(page_title="Selective Local RAG Engine", page_icon="🧠", layout="wide")
 
@@ -76,7 +78,13 @@ def format_docs(docs):
 @st.cache_resource
 def get_vector_store():
     """Cache-managed global access to the persistent PGVector index."""
-    embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
+    # ✅ FIX: Match the exact embedding pipeline used by the background Celery worker
+
+    embeddings = OllamaEmbeddings(
+        model="bge-large:latest", 
+        base_url="http://ollama:11434"
+    )
+    #embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
     return PGVector(embeddings=embeddings, collection_name=COLLECTION_NAME, connection=DB_URL)
 
 @st.cache_resource
@@ -169,9 +177,15 @@ with st.sidebar:
                 save_path = os.path.join(target_dir, f.name)
                 with open(save_path, "wb") as buffer:
                     buffer.write(f.getbuffer())
-                with st.spinner(f"Indexing {f.name}..."):
-                    run_ingestion(single_file_path=save_path)
-            st.success("✅ Selected files uploaded and vector indexed!")
+                #with st.spinner(f"Indexing {f.name}..."):
+                #    run_ingestion(single_file_path=save_path)
+                # ✅ HIGH SCALE FIX: UI drops task to queue instantly. No waiting or screen lag!
+                from tasks import async_process_file
+                async_process_file.delay(save_path, force_update=True)
+
+            #st.success("✅ Selected files uploaded and vector indexed!")
+            st.success("🚀 Ingestion tasks successfully enqueued into background worker execution loops!")
+            time.sleep(1)
             st.rerun()
             
     st.markdown("---")

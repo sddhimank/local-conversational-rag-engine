@@ -27,12 +27,26 @@ def prepare_database():
 
 def init_vector_store(embeddings):
     """Initialise or connect to the pgvector database collection."""
-    return PGVector(
-        embeddings=embeddings,
-        collection_name=COLLECTION_NAME,
-        connection=DB_URL,
-        use_jsonb=True,
-    )
+    from sqlalchemy.exc import IntegrityError
+    try:
+        return PGVector(
+            embeddings=embeddings,
+            collection_name=COLLECTION_NAME,
+            connection=DB_URL,
+            use_jsonb=True,
+        )
+    except IntegrityError as e:
+        # Catch and handle multi-container startup race conditions cleanly
+        if "already exists" in str(e) or "UniqueViolation" in str(e):
+            print("🔄 Database Engine Notice: Detected parallel table creation trace. Re-binding to existing collection references safely...")
+            # Re-attempt connection bind now that the table asset is guaranteed to exist on disk
+            return PGVector(
+                embeddings=embeddings,
+                collection_name=COLLECTION_NAME,
+                connection=DB_URL,
+                use_jsonb=True,
+            )
+        raise e
 
 def read_text_file(filepath):
     """Robust loop to handle problematic Windows/Linux text encodings."""

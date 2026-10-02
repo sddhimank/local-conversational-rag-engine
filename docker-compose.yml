@@ -45,26 +45,69 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30  # Allows up to 5 minutes for downloads to settle
-# NEW SERVICE: Streamlit RAG Web Application Container Configuration
 
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  # NEW SERVICE: Streamlit RAG Web Application Container Configuration
   rag-web-app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: rag_streamlit_app
+    dns:
+      - 8.8.8.8
+      - 8.8.8.8
     ports:
       - "8501:8501"
     volumes:
+      - ./app:/workspace/app
       - D:\Working\LearnAI\rag-postgres-app\data:/workspace/data  # Shared mount volume to inject folder files dynamically
-      - ./upload:/workspace/upload  # Persistent volume mapping for UI dated uploads
+      - ./upload:/workspace/upload 
     environment:
       - DB_URL=postgresql+psycopg://rag_user:rag_password@postgres:5432/rag_db
+      - REDIS_URL=redis://redis:6379/0
       - STORAGE_TYPE=LOCAL # Toggle profile type configuration
     depends_on:
       postgres:
         condition: service_healthy  # Wait until PostgreSQL is fully healthy before starting app
       ollama:
         condition: service_healthy # App waits until models are fully pulled!
+      redis:
+        condition: service_healthy
+    command: sh -c "python app/watcher.py & streamlit run app/ui.py --server.port=8501 --server.address=0.0.0.0"
+
+  rag-celery-worker:
+    build: .
+    container_name: rag_celery_worker
+    dns:
+      - 8.8.8.8
+      - 8.8.8.8
+    environment:
+      - DB_URL=postgresql+psycopg://rag_user:rag_password@postgres:5432/rag_db
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./app:/workspace/app
+      - ./data:/workspace/data
+      - ./upload:/workspace/upload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Launches Celery background worker allocating tasks across all available CPU cores dynamically
+    entrypoint: ""
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 -P threads
+
 volumes:
   pgdata:
   ollama_data:

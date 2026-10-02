@@ -2,7 +2,8 @@ import time
 import os
 from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
-from ingest import run_ingestion, delete_vectors_for_file
+from tasks import async_process_file,async_scan_directory, delete_vectors_for_file
+
 
 WATCH_DIR = "./data"
 
@@ -31,7 +32,12 @@ class NewFileHandler(FileSystemEventHandler):
                 if current_time - self.last_processed[filepath] < 3:
                     return
             
-            self.last_processed[filepath] = current_time   
+            self.last_processed[filepath] = current_time
+            print(f"⚡ Watcher: Intercepting system change. Handing off to Celery queue: {filepath}")
+            
+            # ✅ HIGH SCALE FIX: Dispatch task immediately to Redis message broker channel
+            async_process_file.delay(filepath, force_update=force_update)
+            '''   
             print(f"⚡ Watcher: Intercepted system change for file: {filepath}")
             # Give Windows ample time to completely finish writing the file payload to disk
             time.sleep(2)
@@ -40,6 +46,7 @@ class NewFileHandler(FileSystemEventHandler):
                 run_ingestion(single_file_path=filepath,force_update=force_update)
             else:
                 print(f"⚠️ Watcher: File {filepath} disappeared before ingestion.")
+            '''
 
     def on_created(self, event):
         self.process_file(event.src_path, force_update=False)
@@ -66,9 +73,6 @@ class NewFileHandler(FileSystemEventHandler):
             delete_vectors_for_file(filepath)
 
 if __name__ == "__main__":
-    if not os.path.exists(WATCH_DIR):
-        os.makedirs(WATCH_DIR)
-        
     event_handler = NewFileHandler()
     # PollingObserver is used for stable virtualization folder bindings on Windows WSL
     observer = PollingObserver()
