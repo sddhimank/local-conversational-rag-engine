@@ -6,6 +6,9 @@ ollama_data/
 data/
 upload/
 
+# Downloaded Models
+app/model
+
 # Python runtime artifacts
 __pycache__/
 *.pyc
