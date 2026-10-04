@@ -66,9 +66,10 @@ services:
     container_name: rag_streamlit_app
     dns:
       - 8.8.8.8
-      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "8501:8501"
+      - "8502:8502"
     volumes:
       - ./app:/workspace/app
       - D:\Working\LearnAI\rag-postgres-app\data:/workspace/data  # Shared mount volume to inject folder files dynamically

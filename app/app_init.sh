@@ -23,5 +23,10 @@ python app/init_scan.py
 # 2. Run the folder file watcher daemon in the background to catch live updates
 python app/watcher.py &
 
-echo "🚀 App Init: Launching Streamlit interface..."
-exec streamlit run app/ui.py --server.port=8501 --server.address=0.0.0.0
+echo "🚀 App Init: Launching Linear RAG interface on port 8501..."
+# ✅ FIX: Added the '&' to run port 8501 in the background asynchronously
+exec streamlit run app/ui.py --server.port=8501 --server.address=0.0.0.0 &
+
+echo "🤖 App Init: Launching Agentic Sandbox interface on port 8502..."
+# This runs in the foreground to keep the container engine active and stable
+exec streamlit run app/agent_ui.py --server.port=8502 --server.address=0.0.0.0
