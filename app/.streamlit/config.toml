@@ -1,6 +1,6 @@
 [server]
 # Disables aggressive file scanning across external python site-packages libraries
-folderWatchBlacklist = ["/usr/local/lib/python3.11/site-packages"]
+#folderWatchBlacklist = ["/usr/local/lib/python3.11/site-packages"]
 fileWatcherType = "none"
 
 [browser]

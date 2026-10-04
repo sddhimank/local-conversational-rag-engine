@@ -7,7 +7,7 @@ data/
 upload/
 
 # Downloaded Models
-app/model
+app/model/
 
 # Python runtime artifacts
 __pycache__/

@@ -1,11 +1,13 @@
 import os
 # ✅ THE HARDWARE ACCELERATION FIX: Force PyTorch to utilize all available CPU execution cores 
 # and switch to highly optimized parallel OpenMP/MKL computing backends.
+'''
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
 import torch
 torch.set_num_threads(4)
 torch.set_num_interop_threads(4)
+'''
 
 import glob
 import io
@@ -16,7 +18,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_postgres import PGVector
-from langchain_huggingface import HuggingFaceEmbeddings
+#from langchain_huggingface import HuggingFaceEmbeddings
 
 REDIS_URL = os.getenv("REDIS_URL") or "redis://localhost:6379/0"
 DB_URL = os.getenv("DB_URL") or "postgresql+psycopg://rag_user:rag_password@postgres:5432/rag_db"

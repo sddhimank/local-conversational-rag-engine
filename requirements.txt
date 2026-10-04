@@ -13,9 +13,3 @@ google-cloud-storage>=2.14.0
 watchdog>=4.0.0
 celery>=5.4.0
 redis>=5.0.0
-# ADD HUGGINGFACE LOCAL VECTOR ACCELERATORS
-sentence-transformers>=3.0.0
-langchain-huggingface>=0.1.0
-# ADD DEEP LEARNING EXECUTION RUNTIMES TO CONCLUDE SYNTAX PATH CHECKS
-torch>=2.2.0 --extra-index-url https://pytorch.org
-torchvision>=0.17.0 --extra-index-url https://pytorch.org

@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from datetime import datetime
+from datetime import datetime,time
 from sqlalchemy import create_engine, text
 import pandas as pd
 
@@ -11,7 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from langchain_huggingface import HuggingFaceEmbeddings
+#from langchain_huggingface import HuggingFaceEmbeddings
 from ingest import run_ingestion
 
 
@@ -235,59 +235,126 @@ if user_query := st.chat_input("Ask a question about your files..."):
         elif m["role"] == "assistant":
             chat_history_objects.append(AIMessage(content=m["content"]))
 
-    # 3. Generate assistant answer response
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        
-        with st.spinner("🤖 Analyzing prompt context vectors..."):
-            # Contextualize/rewrite question if history exists
-            if chat_history_objects:
-                standalone_question = contextualize_chain.invoke({
-                    "input": user_query,
-                    "chat_history": chat_history_objects
-                })
-            else:
-                standalone_question = user_query
+     # ─── THE STRUCTURAL ANALYTICS ROUTING GUARDRAIL FIX ───
+    # Intercept metric-seeking phrases and answer them using precise SQL table counts instead of LLM vector guesses
+    metric_keywords = ["total number of files", "how many files", "count", "files in this folder", "how many pdf", "how many txt", "files count"]
+    is_metric_query = any(kw in user_query.lower() for kw in metric_keywords)
 
-            # Build metadata filter block for pgvector targeting
-            search_kwargs = {"k": 3}
-            # FOLDER FILTERS (Uses a list of $like wildcards or matches to isolate directories)
-            if selected_folders:
-                if len(selected_folders) == 1:
-                    search_kwargs["filter"] = {"source": {"$like": f"{selected_folders[0]}/%"}}
-                else:
-                    # Construct multi-folder fallback filter layout
-                    search_kwargs["filter"] = {"$or": [{"source": {"$like": f"{f}/%"}} for f in selected_folders]}
-            # INDIVIDUAL FILE FILTERS
-            elif selected_raw_paths:
-                # Injects LangChain's strict dictionary filtering constraints mapping directly into SQL clauses
-                search_kwargs["filter"] = {"source": {"$in": selected_raw_paths}}
+    if is_metric_query:
+        with st.chat_message("assistant"):
+           with st.spinner("📊 Calculating exact filesystem metrics directly from active index registry..."):
+                engine = create_engine(DB_URL)
                 
-            # Query the vector index
-            retriever = vector_store.as_retriever(search_kwargs=search_kwargs)
-            retrieved_docs = retriever.invoke(standalone_question)
+                # Case A: User is asking about specific folders selected in the sidebar
+                if selected_folders:
+                    folder_counts = {}
+                    total_scoped_files = 0
+                    
+                    for folder in selected_folders:
+                        # Query the exact unique file path strings residing inside this specific subfolder structure
+                        query = text("""
+                            SELECT COUNT(DISTINCT cmetadata->>'source') 
+                            FROM langchain_pg_embedding 
+                            WHERE cmetadata->>'source' LIKE :folder_pattern;
+                        """)
+                        with engine.connect() as conn:
+                            count = conn.execute(query, {"folder_pattern": f"{folder}/%"}).scalar() or 0
+                        folder_counts[folder] = count
+                        total_scoped_files += count
+                    
+                    folder_breakdown = "\n".join([f"*   📁 **`{f}`**: {c} unique files" for f, c in folder_counts.items()])
+                    full_res = (
+                        f"📊 **Active Folder Scope Metrics:**\n\n"
+                        f"Your search scope is currently limited to **{len(selected_folders)} selected folder(s)**:\n"
+                        f"{folder_breakdown}\n\n"
+                        f"🎯 Total unique files across your active target scope: **{total_scoped_files} file(s)**."
+                    )
+                
+                # Case B: No folder selection is active; fallback to global database stats
+                else:
+                    df_db = get_compact_ingest_metrics()
+                    if df_db is not None and not df_db.empty:
+                        total_files = df_db["📁 Files Count"].sum()
+                        pdf_row = df_db[df_db["🧩 Extension"] == ".pdf"]
+                        txt_row = df_db[df_db["🧩 Extension"] == ".txt"]
+                        
+                        pdf_count = pdf_row["📁 Files Count"].values[0] if not pdf_row.empty else 0
+                        txt_count = txt_row["📁 Files Count"].values[0] if not txt_row.empty else 0
+                        
+                        if "pdf" in user_query.lower():
+                            full_res = f"📊 According to the verified database index registry, there are exactly **{pdf_count} PDF files** currently ingested globally."
+                        elif "txt" in user_query.lower():
+                            full_res = f"📊 According to the verified database index registry, there are exactly **{txt_count} text files** currently ingested globally."
+                        else:
+                            full_res = (
+                                f"📊 **Global Database Registry Metrics Summary:**\n\n"
+                                f"*   **Total Unique Global Files Ingested:** {total_files}\n"
+                                f"*   📄 **Portable Document Formats (.pdf):** {pdf_count}\n"
+                                f"*   📝 **Standard Text Codec Logs (.txt):** {txt_count}\n"
+                            )
+                    else:
+                        full_res = "📊 The database index registry currently contains zero documents. Please drop files into your mapped `./data` directory tree."
+                
+                engine.dispose()
+        st.markdown(full_res)
+        st.session_state.messages.append({"role": "assistant", "content": full_res}) 
+
+    # ─── IF NOT A METRIC QUERY, RUN THE STANDARD CONVERSATIONAL VECTOR PROMPT FLOW AS USUAL ───
+    else:
+
+        # 3. Generate assistant answer response
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
             
-            # Synthesize final answer string response
-            full_res = response_generation_chain.invoke({
-                "context": format_docs(retrieved_docs),
-                "chat_history": chat_history_objects,
-                "input": standalone_question
-            })
+            with st.spinner("🤖 Analyzing prompt context vectors..."):
+                # Contextualize/rewrite question if history exists
+                if chat_history_objects:
+                    standalone_question = contextualize_chain.invoke({
+                        "input": user_query,
+                        "chat_history": chat_history_objects
+                    })
+                else:
+                    standalone_question = user_query
+
+                # Build metadata filter block for pgvector targeting
+                search_kwargs = {"k": 3}
+                # FOLDER FILTERS (Uses a list of $like wildcards or matches to isolate directories)
+                if selected_folders:
+                    if len(selected_folders) == 1:
+                        search_kwargs["filter"] = {"source": {"$like": f"{selected_folders[0]}/%"}}
+                    else:
+                        # Construct multi-folder fallback filter layout
+                        search_kwargs["filter"] = {"$or": [{"source": {"$like": f"{f}/%"}} for f in selected_folders]}
+                # INDIVIDUAL FILE FILTERS
+                elif selected_raw_paths:
+                    # Injects LangChain's strict dictionary filtering constraints mapping directly into SQL clauses
+                    search_kwargs["filter"] = {"source": {"$in": selected_raw_paths}}
+                    
+                # Query the vector index
+                retriever = vector_store.as_retriever(search_kwargs=search_kwargs)
+                retrieved_docs = retriever.invoke(standalone_question)
+                
+                # Synthesize final answer string response
+                full_res = response_generation_chain.invoke({
+                    "context": format_docs(retrieved_docs),
+                    "chat_history": chat_history_objects,
+                    "input": standalone_question
+                })
+                
+            placeholder.markdown(full_res)
             
-        placeholder.markdown(full_res)
-        
-        # Display references
-        if retrieved_docs:
-            with st.expander("📋 Verified Sources Referenced"):
-                seen = set()
-                for idx, doc in enumerate(retrieved_docs, start=1):
-                    fname = os.path.basename(doc.metadata.get("source", "Unknown"))
-                    pnum = doc.metadata.get("page", None)
-                    loc = f"Page {pnum + 1}" if pnum is not None else "Text Line"
-                    if f"{fname}|{loc}" not in seen:
-                        st.markdown(f"**[{idx}] File:** `{fname}` — *{loc}*")
-                        st.caption(f'*"...{doc.page_content.strip()[:140]}..."*')
-                        seen.add(f"{fname}|{loc}")
+            # Display references
+            if retrieved_docs:
+                with st.expander("📋 Verified Sources Referenced"):
+                    seen = set()
+                    for idx, doc in enumerate(retrieved_docs, start=1):
+                        fname = os.path.basename(doc.metadata.get("source", "Unknown"))
+                        pnum = doc.metadata.get("page", None)
+                        loc = f"Page {pnum + 1}" if pnum is not None else "Text Line"
+                        if f"{fname}|{loc}" not in seen:
+                            st.markdown(f"**[{idx}] File:** `{fname}` — *{loc}*")
+                            st.caption(f'*"...{doc.page_content.strip()[:140]}..."*')
+                            seen.add(f"{fname}|{loc}")
                         
     # ✅ INDENTED PRECISELY: This line now sits inside the if block!
     # It will ONLY run when a new message is actively being generated.
