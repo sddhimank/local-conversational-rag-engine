@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy the application source code and the source data documents directory
 COPY app/ ./app/
-COPY data/ ./data/
+#COPY data/ ./data/
 
 # Expose Streamlit's default networking port to the internal container network
 EXPOSE 8501

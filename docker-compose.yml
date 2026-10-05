@@ -72,7 +72,7 @@ services:
       - "8502:8502"
     volumes:
       - ./app:/workspace/app
-      - D:\Working\LearnAI\rag-postgres-app\data:/workspace/data  # Shared mount volume to inject folder files dynamically
+      - ./app/data:/workspace/data  # Shared mount volume to inject folder files dynamically
       - ./upload:/workspace/upload 
     environment:
       - DB_URL=postgresql+psycopg://rag_user:rag_password@postgres:5432/rag_db

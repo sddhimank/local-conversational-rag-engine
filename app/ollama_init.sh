@@ -17,6 +17,7 @@ echo "📥 Ollama Init: Pre-loading embedding model: nomic-embed-text..."
 
 echo "📥 Ollama Init: Pre-loading LLM engine: qwen2.5:1.5b..."
 /bin/ollama pull qwen2.5:1.5b
+/bin/ollama pull llama3.1
 
 echo "✅ Ollama Init: All AI models successfully loaded!"
 
