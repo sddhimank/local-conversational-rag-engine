@@ -45,10 +45,17 @@ def execute_document_semantic_search(semantic_query: str) -> str:
     """
     try:
         embeddings = OllamaEmbeddings(model="bge-large:latest", base_url="http://ollama:11434")
-        vector_store = PGVector(embeddings=embeddings, collection_name=COLLECTION_NAME, connection=DB_URL)
+        vector_store = PGVector(embeddings=embeddings, collection_name="agent_content_chunks", connection=DB_URL)
         
+        # ✅ THE QUERY SANITIZER FIX: Cleanse file paths and extensions if passed by the LLM
+        cleaned_query = semantic_query
+        for word in [".pdf", "file:", "document:", "content:", "find", "search"]:
+            cleaned_query = cleaned_query.replace(word, "")
+        cleaned_query = cleaned_query.strip()
+        
+        print(f"🔍 [Search Agent Executing]: Cleaned target query string -> '{cleaned_query}'")
         retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-        docs = retriever.invoke(semantic_query)
+        docs = retriever.invoke(cleaned_query)
         
         if not docs:
             return "NOTICE: Similarity search completed successfully, but zero relevant document fragments matched this query inside the vector index grid."
@@ -81,14 +88,30 @@ def query_document_metadata(
     """
     import datetime
     engine = create_engine(DB_URL)
+
+     # ✅ THE BULLETPROOF SANITIZER FIX: Convert LLM text literal 'null' strings back into Python None values
+    if str(author).strip().lower() in ["none", "null", ""]: author = None
+    if str(modified_after).strip().lower() in ["none", "null", ""]: modified_after = None
+    if str(modified_before).strip().lower() in ["none", "null", ""]: modified_before = None
+    
+    # Process the file size integer parameter boundary safely
+    if max_file_size_bytes is not None:
+        size_str = str(max_file_size_bytes).strip().lower()
+        if size_str in ["none", "null", "0", ""]:
+            max_file_size_bytes = None # Drop constraint if the LLM passes zero or null strings
+        else:
+            try:
+                max_file_size_bytes = int(max_file_size_bytes)
+            except Exception:
+                max_file_size_bytes = None
     
     # Base raw SQL query targeting unique source files from the JSONB metadata column
     base_query = "SELECT DISTINCT cmetadata->>'source' as src, cmetadata->>'file_size' as sz, cmetadata->>'file_mtime' as mt, cmetadata->>'author' as aut FROM langchain_pg_embedding WHERE 1=1"
-    params = {}
+    #params = {}
     
     try:
         with engine.connect() as conn:
-            results = conn.execute(text(base_query), params).fetchall()
+            results = conn.execute(text(base_query)).fetchall()
             
         if not results:
             return "NOTICE: The database registry currently contains zero indexed documents."
@@ -105,11 +128,20 @@ def query_document_metadata(
             
             # Evaluate filters mathematically in-memory
             keep = True
+            if author:
+                search_term = author.lower()
+                # Matches if the term is found in either the file properties or the page text clauses
+                f_auth_match = search_term in str(row.get("file_author", "")).lower()
+                t_auth_match = search_term in str(row.get("text_author", "")).lower()
+                if not (f_auth_match or t_auth_match):
+                    keep = False
+            '''
             if author and author.lower() not in f_author.lower():
                 keep = False
             if max_file_size_bytes and f_size > max_file_size_bytes:
                 keep = False
-            
+            '''
+
             if modified_after and f_date:
                 after_dt = datetime.datetime.strptime(modified_after, "%Y-%m-%d").date()
                 if f_date <= after_dt:
@@ -133,3 +165,29 @@ def query_document_metadata(
         return f"ERROR: Failed to parse document metadata fields: {str(e)}"
     finally:
         engine.dispose()
+
+@tool
+def execute_metadata_semantic_search(metadata_query: str) -> str:
+    """Useful for running a semantic vector similarity search ONLY over document metadata summaries, 
+    abstracts, authors, and classification parameters. Use this tool first when a user asks about 
+    the presence of files, summaries of topics, or files authored by specific categories.
+    """
+    try:
+        embeddings = OllamaEmbeddings(model="bge-large:latest", base_url="http://ollama:11434")
+        # Explicitly targets the isolated metadata table registry collection
+        metadata_store = PGVector(embeddings=embeddings, collection_name="agent_metadata_summaries", connection=DB_URL)
+        
+        retriever = metadata_store.as_retriever(search_kwargs={"k": 3})
+        docs = retriever.invoke(metadata_query)
+        
+        if not docs:
+            return "NOTICE: Metadata similarity lookup completed successfully, but zero matching document summaries were found."
+            
+        formatted_summaries = []
+        for idx, doc in enumerate(docs, start=1):
+            src = os.path.basename(doc.metadata.get("source", "Unknown"))
+            formatted_summaries.append(f"📦 [Matched File Summary {idx}]: `{src}`\nTags Found: {doc.page_content}\n")
+            
+        return "SUCCESS: Vector search on metadata table matched the following files:\n\n" + "\n".join(formatted_summaries)
+    except Exception as e:
+        return f"ERROR: Failed to search semantic metadata table rows: {str(e)}"

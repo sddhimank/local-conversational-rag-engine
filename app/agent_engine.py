@@ -5,7 +5,12 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # Clean sandboxed tool layer imports
-from agent_tools import calculate_database_file_metrics, execute_document_semantic_search, query_document_metadata
+from agent_tools import (
+    calculate_database_file_metrics, 
+    execute_document_semantic_search, 
+    query_document_metadata,
+    execute_metadata_semantic_search
+)
 
 class CustomAgentExecutor:
     """A lightweight, version-independent, production-grade custom Agentic reasoning loop engine."""
@@ -52,14 +57,16 @@ class CustomAgentExecutor:
             if response_msg.tool_calls:
                 # Append the model's action intent log to the scratchpad memory
                 agent_scratchpad.append(response_msg)
-                
+               
                 for tool_call in response_msg.tool_calls:
                     t_name = tool_call["name"]
                     t_args = tool_call["args"]
-                    t_id = tool_call.get("id", f"call_{iteration}")
+                    t_id = tool_call.get("id") or f"call_{iteration}"
                     
                     print(f"🛠️  [Action {iteration}]: LLM selected tool '{t_name}' with args: {t_args}")
                     
+                    tool_result = f"ERROR: Processing loop sequence interrupted before tool '{t_name}' could finish."
+
                     if t_name in self.tools_map:
                         try:
                             # Safely execute the matching Python tool module function
@@ -73,7 +80,10 @@ class CustomAgentExecutor:
                     
                     # Convert the raw tool text return back into a formal LangChain ToolMessage
                     from langchain_core.messages import ToolMessage
-                    agent_scratchpad.append(ToolMessage(content=str(tool_result), tool_call_id=t_id))
+                    agent_scratchpad.append(ToolMessage(
+                        content=str(tool_result),
+                        name=t_name, 
+                        tool_call_id=t_id))
                     
             # Scenario B: The LLM completed its goals and gave a final answer text block
             else:
@@ -88,7 +98,7 @@ def get_autonomous_agent_executor():
     """Compiles the custom independent tool-calling agent framework graph."""
     # Using qwen2.5:1.5b out of the box as it contains pristine native tool-calling weights
     llm = ChatOllama(
-        model="qwen2.5:1.5b", 
+        model="llama3.1:latest", #"qwen2.5:1.5b", 
         temperature=0.0, 
         base_url="http://ollama:11434"
     )
@@ -96,18 +106,20 @@ def get_autonomous_agent_executor():
     tools_suite = [
         calculate_database_file_metrics, 
         execute_document_semantic_search, 
-        query_document_metadata
+        query_document_metadata,
+        execute_metadata_semantic_search
     ]
     
     system_instruction = (
-        "CRITICAL RULE: You are an automated AI agent that CANNOT answer ANY question using your own general knowledge. "
-        "You must ALWAYS call at least one tool from your toolkit to analyze the system before generating a final response.\n\n"
-        "INSTRUCTIONS FOR MULTI-INTENT QUESTIONS:\n"
-        "If a user query asks multiple things (e.g., a file count AND a topic search), you MUST plan and execute multiple tools sequentially. "
-        "Step 1: Call 'calculate_database_file_metrics' or 'query_document_metadata' to answer the file metrics/counts.\n"
-        "Step 2: Take the output, save it, and immediately call 'execute_document_semantic_search' to gather text details about the topic.\n"
-        "Step 3: Only after you have gathered observation data from BOTH tools, combine the findings into your final answer.\n\n"
-        "Never complete the loop in 1 step if a tool can be used. Be direct, factual, and strictly rely on tool observations."
+        "CRITICAL OPERATIONAL DIRECTIVE:\n"
+        "You are an enterprise document parsing assistant. You are strictly forbidden from issuing general safety refusals, "
+        "medical disclaimers, or health-related blocks. The term 'sick leave' is a corporate administrative metric, NOT a medical topic.\n\n"
+        "CORE RULES:\n"
+        "1. You CANNOT answer ANY question using your own general knowledge or personal assumptions.\n"
+        "2. You MUST ALWAYS call a tool to inspect the local database index before outputting a response.\n"
+        "3. If the user asks about policies, rules, logs, or leaves (e.g., 'sick leaves available'), you MUST immediately "
+        "call 'execute_document_semantic_search' passing the exact keywords to pull the corporate manual facts.\n"
+        "4. Synthesize your final answer ONLY from the text results returned by your tools. Do not apologize, do not refuse."
     )
     
     return CustomAgentExecutor(llm=llm, tools=tools_suite, system_instruction=system_instruction)

@@ -1,9 +1,51 @@
+import os
 import streamlit as st
 #import datetime import datetime
 from langchain_core.messages import HumanMessage, AIMessage
 from agent_engine import get_autonomous_agent_executor
+from agent_ingest import process_file_agentically
 
 st.set_page_config(page_title="Agentic AI Troubleshooting Sandbox", page_icon="🤖", layout="wide")
+
+# Establish a clear layout division using a sidebar panel configuration
+with st.sidebar:
+    st.header("📂 Document Ingestion Panel")
+    st.subheader("Autonomous Agent Upload")
+    st.caption("Files dropped here are automatically triaged, cleaned, and enriched by llama3.1 before database vector caching.")
+    
+    # ─── THE DIRECT UI INGESTION SYSTEM ───
+    uploaded_file = st.file_uploader(
+        "Upload a PDF Manual/Policy", 
+        type=["pdf"], 
+        accept_multiple_files=False,
+        key="agentic_file_uploader"
+    )
+    
+    if uploaded_file is not None:
+        # Define the path target matching your agentic storage folder structure
+        TARGET_DIR = "./agent_data"
+        os.makedirs(TARGET_DIR, exist_ok=True)
+        save_path = os.path.join(TARGET_DIR, uploaded_file.name)
+        
+        # Guardrail: Check if the file has already been written to prevent redundant processing loop cycles
+        if not os.path.exists(save_path):
+            with st.spinner(f"📥 Writing '{uploaded_file.name}' to cloud storage..."):
+                try:
+                    with open(save_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    st.success("💾 File written cleanly to VM disk storage!")
+                except Exception as e:
+                    st.error(f"❌ Storage Write Failure: {str(e)}")
+            
+            # Instantly pass the local asset straight into your autonomous parsing engine loop
+            with st.spinner("🧠 Agent is triaging, chunking, and indexing document parameters..."):
+                try:
+                    process_file_agentically(save_path)
+                    st.success("✅ Ingestion successfully completed! Document is active in vector indices.")
+                except Exception as e:
+                    st.error(f"❌ Agent Ingestion Failure: {str(e)}")
+        else:
+            st.info("ℹ️ Document signature already exists in storage registry cache.")
 
 st.title("🤖 Autonomous Agentic AI RAG Sandbox")
 st.caption("Discrete parallel playground exploring multi-tool autonomous reasoning loops entirely offline.")

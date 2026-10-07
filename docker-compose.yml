@@ -73,7 +73,8 @@ services:
     volumes:
       - ./app:/workspace/app
       - ./app/data:/workspace/data  # Shared mount volume to inject folder files dynamically
-      - ./upload:/workspace/upload 
+      - ./upload:/workspace/upload
+      - ./agent_data:/workspace/agent_data
     environment:
       - DB_URL=postgresql+psycopg://rag_user:rag_password@postgres:5432/rag_db
       - REDIS_URL=redis://redis:6379/0
@@ -100,6 +101,7 @@ services:
       - ./app:/workspace/app
       - ./data:/workspace/data
       - ./upload:/workspace/upload
+      - ./agent_data:/workspace/agent_data
     depends_on:
       postgres:
         condition: service_healthy
