@@ -5,6 +5,7 @@ ollama_data/
 # User Data Directories
 data/
 upload/
+agent_data/
 
 # Downloaded Models
 app/model/
