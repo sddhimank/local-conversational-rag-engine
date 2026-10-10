@@ -1,4 +1,5 @@
 import os
+import re
 from langchain_core.tools import tool
 from sqlalchemy import create_engine, text
 from langchain_ollama import OllamaEmbeddings
@@ -44,7 +45,7 @@ def execute_document_semantic_search(semantic_query: str) -> str:
     This tool runs a high-density vector similarity search over text blocks and returns the most relevant contextual content fragments found.
     """
     try:
-        embeddings = OllamaEmbeddings(model="bge-large:latest", base_url="http://ollama:11434")
+        embeddings = OllamaEmbeddings(model="nomic-embed-text:latest", base_url="http://ollama:11434")
         vector_store = PGVector(embeddings=embeddings, collection_name="agent_content_chunks", connection=DB_URL)
         
         # ✅ THE QUERY SANITIZER FIX: Cleanse file paths and extensions if passed by the LLM
@@ -65,7 +66,14 @@ def execute_document_semantic_search(semantic_query: str) -> str:
             src = os.path.basename(doc.metadata.get("source", "Unknown"))
             formatted_context.append(f"--- Context Source Segment [{idx}]: {src} ---\n{doc.page_content}\n")
             
-        return "\n".join(formatted_context)
+        #return "\n".join(formatted_context)
+
+        if len(formatted_context) > 1:
+            combined_context = "\n".join(formatted_context)
+            # Hard character ceiling to prevent CPU context inflation
+            if len(combined_context) > 3000:
+                combined_context = combined_context[:3000] + "\n...[Context truncated for token efficiency]..."
+            return combined_context
     except Exception as e:
         return f"ERROR: Failed to compute vector similarity lookup sequence: {str(e)}"
 
@@ -75,7 +83,7 @@ def query_document_metadata(
     modified_after: str = None, 
     modified_before: str = None, 
     max_file_size_bytes: int = None
-) -> str:
+    ) -> str:
     """Useful for searching, filtering, and locating files based on structural metadata properties 
     such as who wrote the file (author), when it was created/modified (before or after a certain date), 
     or its size constraints on disk.
@@ -173,7 +181,7 @@ def execute_metadata_semantic_search(metadata_query: str) -> str:
     the presence of files, summaries of topics, or files authored by specific categories.
     """
     try:
-        embeddings = OllamaEmbeddings(model="bge-large:latest", base_url="http://ollama:11434")
+        embeddings = OllamaEmbeddings(model="nomic-embed-text:latest", base_url="http://ollama:11434")
         # Explicitly targets the isolated metadata table registry collection
         metadata_store = PGVector(embeddings=embeddings, collection_name="agent_metadata_summaries", connection=DB_URL)
         
@@ -191,3 +199,147 @@ def execute_metadata_semantic_search(metadata_query: str) -> str:
         return "SUCCESS: Vector search on metadata table matched the following files:\n\n" + "\n".join(formatted_summaries)
     except Exception as e:
         return f"ERROR: Failed to search semantic metadata table rows: {str(e)}"
+
+@tool
+def fallback_regex_keyword_search(search_keyword: str) -> str:
+    """Useful fallback tool for locating specific tabular structural data, 
+    version matrices, or exact matching text phrases across document layouts 
+    when conversational vector similarity searches fail to yield accurate hits.
+    """
+    engine = create_engine(DB_URL)
+    
+    query_pieces = re.split(r'[\s_\-\.]', search_keyword.lower())
+    pipeline_verbs = {"list", "show", "history", "revision", "document", "for", "the", "pdf", "", "a", "of", "in", "to", "tabular", "table"}
+    file_target_tokens = list(dict.fromkeys([p for p in query_pieces if p not in pipeline_verbs and len(p) >= 3]))
+    
+    raw_tokens = re.findall(r'\b\w{3,}\b', search_keyword.lower())
+    content_tokens = [t for t in raw_tokens if t not in file_target_tokens and t not in ["pdf"]]
+    
+    expanded_text_tokens = []
+    for token in content_tokens:
+        expanded_text_tokens.append(token)
+        if len(token) > 3 and token not in pipeline_verbs:
+            expanded_text_tokens.append(token[:3])
+    expanded_text_tokens = list(dict.fromkeys(expanded_text_tokens))
+
+    query_params = {}
+    where_clauses = ["col.name = 'agent_content_chunks'"]
+    
+    if file_target_tokens:
+        file_conditions = []
+        for i, f_token in enumerate(file_target_tokens):
+            file_conditions.append(f"LOWER(emb.cmetadata->>'source') LIKE :f_{i}")
+            query_params[f"f_{i}"] = f"%{f_token}%"
+        where_clauses.append(f"({' AND '.join(file_conditions)})")
+        
+    if expanded_text_tokens:
+        text_conditions = []
+        for j, t_token in enumerate(expanded_text_tokens):
+            text_conditions.append(f"LOWER(emb.document) LIKE :t{j}")
+            query_params[f"t{j}"] = f"%{t_token}%"
+        where_clauses.append(f"({' OR '.join(text_conditions)})")
+
+    sql_string = f"""
+        SELECT emb.cmetadata->>'source' as src, emb.document 
+        FROM langchain_pg_embedding emb
+        JOIN langchain_pg_collection col ON emb.collection_id = col.uuid
+        WHERE { ' AND '.join(where_clauses) }
+        ORDER BY (CASE WHEN emb.document LIKE '%|%' THEN 0 ELSE 1 END) ASC, emb.id ASC
+        LIMIT 25;
+    """
+    
+    try:
+        with engine.connect() as conn:
+            results = conn.execute(text(sql_string), query_params).fetchall()
+            
+        if not results:
+            return f"NOTICE: No rows matched target parameters: {file_target_tokens}"
+            
+        raw_table_rows = []
+        matched_filename = "Unknown"
+        
+        # 1. First Pass: Collect all lines across database chunks that belong to a table layout
+        for row in results:
+            current_src = os.path.basename(row.src or "Unknown")
+            if file_target_tokens and not any(tok in current_src.lower() for tok in file_target_tokens):
+                continue
+                
+            matched_filename = current_src
+            raw_lines = row.document.split('\n')
+            
+            for line in raw_lines:
+                line_str = line.strip()
+                if not line_str or "rev#" in line_str.lower() or "version" in line_str.lower() or re.match(r'^\|[\s\-:|]+$', line_str):
+                    continue
+                if line_str not in raw_table_rows:
+                    raw_table_rows.append(line_str)
+
+        # 2. 🌟 ADAPTIVE ROW ACCUMULATOR & PARSER ENGINE
+        consolidated_table_rows = []
+        current_version_row = None
+        seen_versions = set()
+        
+        for line in raw_table_rows:
+            # Detect version strings (e.g., 1.0, 4.5)
+            version_match = re.search(r'\b\d\.\d\b', line)
+            
+            if version_match:
+                v_num = version_match.group(0)
+                if v_num in seen_versions:
+                    continue
+                    
+                # If we have an existing row accumulated, commit it before starting a new one
+                if current_version_row:
+                    consolidated_table_rows.append(current_version_row)
+                    
+                seen_versions.add(v_num)
+                
+                if '|' in line:
+                    cells = [c.strip() for c in line.split('|') if c.strip()]
+                    if len(cells) >= 3:
+                        current_version_row = f"| {cells[0]} | {cells[1]} | {' '.join(cells[2:])} |"
+                    else:
+                        current_version_row = None
+                        seen_versions.remove(v_num)
+                else:
+                    # 🌟 INDEX SYNTAX FIX FOR 1.0 AND 1.1
+                    segments = re.split(r'\s{2,}', line)
+                    if len(segments) >= 3:
+                        details_payload = " ".join(segments[2:])
+                        current_version_row = f"| {segments[0]} | {segments[1]} | {details_payload} |"
+                    else:
+                        current_version_row = None
+                        seen_versions.remove(v_num)
+            else:
+                # 🌟 MULTI-LINE DESCRIPTION BINDING: If the line doesn't start with a number
+                # and contains column data, append it to the active row's description field
+                if current_version_row and '|' in line:
+                    clean_append_text = line.replace('|', ' ').strip()
+                    # Clean out formatting artifacts
+                    clean_append_text = re.sub(r'\s+', ' ', clean_append_text)
+                    if clean_append_text:
+                        current_version_row = current_version_row[:-2] + " • " + clean_append_text + " |"
+
+        # Catch the final row in the buffer pipeline
+        if current_version_row:
+            consolidated_table_rows.append(current_version_row)
+
+        if consolidated_table_rows:
+            # Sort chronologically by version number
+            try:
+                consolidated_table_rows.sort(key=lambda x: [float(i) for i in re.findall(r'\d+\.\d+', x)[:1]])
+            except:
+                pass
+                
+            table_header = "| Revision Version | Effective Date | Author & Change Modification Details |"
+            separator = "|---|---|---|"
+            clean_table_output = f"{table_header}\n{separator}\n" + "\n".join(consolidated_table_rows)
+            
+            return f"--- Verified Table Extraction for File '{matched_filename}' ---\n\n{clean_table_output}"
+        else:
+            return "NOTICE: Structural matrices could not be consolidated from text layers."
+            
+    except Exception as e:
+        return f"ERROR: Dynamic stream consolidator failed: {str(e)}"
+    finally:
+        engine.dispose()

@@ -7,6 +7,12 @@ services:
       POSTGRES_USER: rag_user
       POSTGRES_PASSWORD: rag_password
       POSTGRES_DB: rag_db
+    # Force optimization settings directly into postgres execution
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c work_mem=32MB
+      -c maintenance_work_mem=256MB
     ports:
       - "5432:5432"
     volumes:
@@ -25,6 +31,15 @@ services:
     volumes:
       - ollama_data:/root/.ollama
       - ./app/ollama_init.sh:/tmp/ollama_init.sh # mount the entry script
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+    deploy:
+      resources:
+        limits:
+          cpus: '2.5'
+          memory: 8G
+
     # Override container entrypoint to convert line endings and run the script automatically
     entrypoint:
       - /bin/sh
